@@ -717,6 +717,9 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
 
                 _clientSettings.Update(Http2FrameReader.ReadSettings(payload));
 
+                // Maximum encoder size is limited by the configured max on the server
+                _frameWriter.UpdateMaxHeaderTableSize(Math.Min(_clientSettings.HeaderTableSize, (uint)Limits.Http2.HeaderTableSize));
+
                 // Ack before we update the windows, they could send data immediately.
                 var ackTask = _frameWriter.WriteSettingsAckAsync();
 

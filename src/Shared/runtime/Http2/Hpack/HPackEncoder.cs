@@ -483,6 +483,25 @@ namespace System.Net.Http.HPack
             return false;
         }
 
+        public static bool EncodeDynamicTableSizeUpdate(int value, Span<byte> destination, out int bytesWritten)
+        {
+            // From https://tools.ietf.org/html/rfc7541#section-6.3
+            // ----------------------------------------------------
+            //   0   1   2   3   4   5   6   7
+            // +---+---+---+---+---+---+---+---+
+            // | 0 | 0 | 1 |   Max size (5+)   |
+            // +---+---------------------------+
+
+            if (destination.Length != 0)
+            {
+                destination[0] = 0x20;
+                return IntegerEncoder.Encode(value, 5, destination, out bytesWritten);
+            }
+
+            bytesWritten = 0;
+            return false;
+        }
+
         public static bool EncodeStringLiterals(ReadOnlySpan<string> values, string? separator, Span<byte> destination, out int bytesWritten)
         {
             bytesWritten = 0;

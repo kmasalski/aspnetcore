@@ -24,12 +24,13 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2.HPack
         private uint _headerTableSize;
         private uint _maxHeaderTableSize;
         private uint _maxHeaderListSize;
+        private bool _pendingTableSizeUpdate;
 
         public bool IgnoreMaxHeaderListSize => _maxHeaderListSize == Http2PeerSettings.DefaultMaxHeaderListSize;
 
-        public Http2HPackEncoder(IHeaderSensitivityDetector sensitivityDetector = null)
+        public Http2HPackEncoder(uint maxHeaderTableSize = Http2PeerSettings.DefaultHeaderTableSize, IHeaderSensitivityDetector sensitivityDetector = null)
         {
-            _maxHeaderTableSize = Http2PeerSettings.DefaultHeaderTableSize;
+            _maxHeaderTableSize = maxHeaderTableSize;
             _maxHeaderListSize = Http2PeerSettings.DefaultMaxHeaderListSize;
             Head = new HPackHeaderEntry();
             Head.Initialize(-1, string.Empty, string.Empty, int.MaxValue, null);
@@ -39,11 +40,12 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2.HPack
             _sensitivityDetector = sensitivityDetector;
         }
 
-        public void SetMaxHeaderTableSize(uint maxHeaderTableSize)
+        public void UpdateMaxHeaderTableSize(uint maxHeaderTableSize)
         {
             if (_maxHeaderTableSize != maxHeaderTableSize)
             {
                 _maxHeaderTableSize = maxHeaderTableSize;
+                _pendingTableSizeUpdate = true;
 
                 // Check capacity and remove entries that exceed the new capacity
                 EnsureCapacity(0);
@@ -60,21 +62,33 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2.HPack
         /// </summary>
         public bool BeginEncodeHeaders(int statusCode, Http2HeadersEnumerator headersEnumerator, Span<byte> buffer, out int length)
         {
-            if (!EncodeStatusHeader(statusCode, buffer, out var statusCodeLength))
+            length = 0;
+
+            if (_pendingTableSizeUpdate)
+            {
+                if (!HPackEncoder.EncodeDynamicTableSizeUpdate((int)_maxHeaderTableSize, buffer, out var sizeUpdateLength))
+                {
+                    throw new HPackEncodingException(SR.net_http_hpack_encode_failure);
+                }
+                length += sizeUpdateLength;
+                _pendingTableSizeUpdate = false;
+            }
+
+            if (!EncodeStatusHeader(statusCode, buffer.Slice(length), out var statusCodeLength))
             {
                 throw new HPackEncodingException(SR.net_http_hpack_encode_failure);
             }
+            length += statusCodeLength;
 
             if (!headersEnumerator.MoveNext())
             {
-                length = statusCodeLength;
                 return true;
             }
 
             // We're ok with not throwing if no headers were encoded because we've already encoded the status.
             // There is a small chance that the header will encode if there is no other content in the next HEADERS frame.
-            var done = EncodeHeadersCore(headersEnumerator, buffer.Slice(statusCodeLength), throwIfNoneEncoded: false, out var headersLength);
-            length = statusCodeLength + headersLength;
+            var done = EncodeHeadersCore(headersEnumerator, buffer.Slice(length), throwIfNoneEncoded: false, out var headersLength);
+            length += headersLength;
             return done;
         }
 
@@ -83,13 +97,26 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2.HPack
         /// </summary>
         public bool BeginEncodeHeaders(Http2HeadersEnumerator headersEnumerator, Span<byte> buffer, out int length)
         {
+            length = 0;
+
+            if (_pendingTableSizeUpdate)
+            {
+                if (!HPackEncoder.EncodeDynamicTableSizeUpdate(1, buffer, out var sizeUpdateLength))
+                {
+                    throw new HPackEncodingException(SR.net_http_hpack_encode_failure);
+                }
+                length += sizeUpdateLength;
+                _pendingTableSizeUpdate = false;
+            }
+
             if (!headersEnumerator.MoveNext())
             {
-                length = 0;
                 return true;
             }
 
-            return EncodeHeadersCore(headersEnumerator, buffer, throwIfNoneEncoded: true, out length);
+            var done = EncodeHeadersCore(headersEnumerator, buffer.Slice(length), throwIfNoneEncoded: true, out var headersLength);
+            length += headersLength;
+            return done;
         }
 
         /// <summary>
@@ -115,7 +142,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2.HPack
                     return HPackEncoder.EncodeIndexedHeaderField(H2StaticTable.StatusIndex[statusCode], buffer, out length);
                 default:
                     const string name = ":status";
-                    var value = StatusCodes.ToStatusBytes(statusCode);
+                    var value = StatusCodes.ToStatusString(statusCode);
                     return EncodeHeader(buffer, H2StaticTable.Status200, name, value, out length);
             }
         }

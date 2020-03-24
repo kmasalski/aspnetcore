@@ -3177,7 +3177,56 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                 withFlags: (byte)Http2SettingsFrameFlags.ACK,
                 withStreamId: 0);
 
-            await StopConnectionAsync(expectedLastStreamId: 0, ignoreNonGoAwayFrames: false);
+            // Start request
+            await StartStreamAsync(1, _browserRequestHeaders, endStream: true);
+
+            var headerFrame = await ExpectAsync(Http2FrameType.HEADERS,
+                withLength: 35,
+                withFlags: (byte)(Http2HeadersFrameFlags.END_HEADERS | Http2HeadersFrameFlags.END_STREAM),
+                withStreamId: 1);
+
+            // Headers start with :status = 200
+            Assert.Equal(0x88, headerFrame.Payload.Span[0]);
+
+            await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
+        }
+
+        [Fact]
+        public async Task SETTINGS_Received_WithLargeHeaderTableSizeLimit_ChangesHeaderTableSize()
+        {
+            _serviceContext.ServerOptions.Limits.Http2.HeaderTableSize = 40000;
+
+            await InitializeConnectionAsync(_noopApplication, expectedSettingsCount: 4);
+
+            // Update client settings
+            _clientSettings.HeaderTableSize = 65536; // Chrome's default, larger than the 4kb spec default
+            await SendSettingsAsync();
+
+            // ACK
+            await ExpectAsync(Http2FrameType.SETTINGS,
+                withLength: 0,
+                withFlags: (byte)Http2SettingsFrameFlags.ACK,
+                withStreamId: 0);
+
+            // Start request
+            await StartStreamAsync(1, _browserRequestHeaders, endStream: true);
+
+            var headerFrame = await ExpectAsync(Http2FrameType.HEADERS,
+                withLength: 39,
+                withFlags: (byte)(Http2HeadersFrameFlags.END_HEADERS | Http2HeadersFrameFlags.END_STREAM),
+                withStreamId: 1);
+
+            const byte DynamicTableSizeUpdateMask = 0xe0;
+
+            var integerDecoder = new IntegerDecoder();
+            Assert.False(integerDecoder.BeginTryDecode((byte)(headerFrame.Payload.Span[0] & ~DynamicTableSizeUpdateMask), prefixLength: 5, out _));
+            Assert.False(integerDecoder.TryDecode(headerFrame.Payload.Span[1], out _));
+            Assert.False(integerDecoder.TryDecode(headerFrame.Payload.Span[2], out _));
+            Assert.True(integerDecoder.TryDecode(headerFrame.Payload.Span[3], out var result));
+
+            Assert.Equal(40000, result);
+
+            await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
         }
 
         [Fact]

@@ -75,8 +75,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
 
             var enumerator = new Http2HeadersEnumerator();
 
-            var http2HPackEncoder = new Http2HPackEncoder();
-            http2HPackEncoder.SetMaxHeaderTableSize(256);
+            var http2HPackEncoder = new Http2HPackEncoder(256);
 
             // First response
             enumerator.Initialize(headers);
@@ -194,7 +193,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
             var enumerator = new Http2HeadersEnumerator();
             enumerator.Initialize(headers);
 
-            var http2HPackEncoder = new Http2HPackEncoder(new TestSensitivityDetector());
+            var http2HPackEncoder = new Http2HPackEncoder(Http2PeerSettings.DefaultHeaderTableSize, new TestSensitivityDetector());
             Assert.True(http2HPackEncoder.BeginEncodeHeaders(200, enumerator, buffer, out var length));
 
             var result = buffer.Slice(0, length).ToArray();
@@ -235,8 +234,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                     },
                     new byte[]
                     {
-                        // 0    12     c     u     s     t     o     m
-                        0x00, 0x0c, 0x63, 0x75, 0x73, 0x74, 0x6f, 0x6d,
+                        //      12     c     u     s     t     o     m
+                        0x40, 0x0c, 0x63, 0x75, 0x73, 0x74, 0x6f, 0x6d,
                         // h     e     a     d     e     r    11     C
                         0x68, 0x65, 0x61, 0x64, 0x65, 0x72, 0x0b, 0x43,
                         // u     s     t     o     m     V     a     l
@@ -253,8 +252,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                     },
                     new byte[]
                     {
-                        // 0    27     c     u     s     t     o     m
-                        0x00, 0x1b, 0x63, 0x75, 0x73, 0x74, 0x6f, 0x6d,
+                        //      27     c     u     s     t     o     m
+                        0x40, 0x1b, 0x63, 0x75, 0x73, 0x74, 0x6f, 0x6d,
                         // h     e     a     d     e     r     !     #
                         0x68, 0x65, 0x61, 0x64, 0x65, 0x72, 0x21, 0x23,
                         // $     %     &     '     *     +     -     .
@@ -277,16 +276,16 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                     },
                     new byte[]
                     {
-                        0x88, 0x00, 0x04, 0x64, 0x61, 0x74, 0x65, 0x1d,
+                        0x88, 0x40, 0x04, 0x64, 0x61, 0x74, 0x65, 0x1d,
                         0x4d, 0x6f, 0x6e, 0x2c, 0x20, 0x32, 0x34, 0x20,
                         0x4a, 0x75, 0x6c, 0x20, 0x32, 0x30, 0x31, 0x37,
                         0x20, 0x31, 0x39, 0x3a, 0x32, 0x32, 0x3a, 0x33,
-                        0x30, 0x20, 0x47, 0x4d, 0x54, 0x00, 0x0c, 0x63,
+                        0x30, 0x20, 0x47, 0x4d, 0x54, 0x40, 0x0c, 0x63,
                         0x6f, 0x6e, 0x74, 0x65, 0x6e, 0x74, 0x2d, 0x74,
                         0x79, 0x70, 0x65, 0x18, 0x74, 0x65, 0x78, 0x74,
                         0x2f, 0x68, 0x74, 0x6d, 0x6c, 0x3b, 0x20, 0x63,
                         0x68, 0x61, 0x72, 0x73, 0x65, 0x74, 0x3d, 0x75,
-                        0x74, 0x66, 0x2d, 0x38, 0x00, 0x06, 0x73, 0x65,
+                        0x74, 0x66, 0x2d, 0x38, 0x40, 0x06, 0x73, 0x65,
                         0x72, 0x76, 0x65, 0x72, 0x07, 0x4b, 0x65, 0x73,
                         0x74, 0x72, 0x65, 0x6c
                     },
@@ -396,6 +395,30 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
             Assert.True(http2HPackEncoder.ContinueEncodeHeaders(headerEnumerator, payload.Slice(offset, sliceLength), out length));
             Assert.Equal(expectedServerHeaderPayload.Length, length);
             Assert.Equal(expectedServerHeaderPayload, payload.Slice(offset, length).ToArray());
+        }
+
+        [Fact]
+        public void BeginEncodeHeaders_MaxHeaderTableSizeUpdated_SizeUpdateInHeaders()
+        {
+            Span<byte> buffer = new byte[1024 * 16];
+
+            var hpackEncoder = new Http2HPackEncoder();
+            hpackEncoder.UpdateMaxHeaderTableSize(100);
+
+            var enumerator = new Http2HeadersEnumerator();
+
+            // First request
+            enumerator.Initialize(new Dictionary<string, StringValues>());
+            Assert.True(hpackEncoder.BeginEncodeHeaders(enumerator, buffer, out var length));
+
+            Assert.Equal(1, length);
+            Assert.Equal(0x21, buffer[0]);
+
+            // Second request
+            enumerator.Initialize(new Dictionary<string, StringValues>());
+            Assert.True(hpackEncoder.BeginEncodeHeaders(enumerator, buffer, out length));
+
+            Assert.Equal(0, length);
         }
 
         private static Http2HeadersEnumerator GetHeadersEnumerator(IEnumerable<KeyValuePair<string, string>> headers)

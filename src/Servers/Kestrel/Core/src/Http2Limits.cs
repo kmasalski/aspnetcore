@@ -39,7 +39,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core
         }
 
         /// <summary>
-        /// Limits the size of the header compression table, in octets, the HPACK decoder on the server can use.
+        /// Limits the size of the header compression tables, in octets, the HPACK encoder and decoder on the server can use.
         /// <para>
         /// Value must be greater than 0, defaults to 4096
         /// </para>

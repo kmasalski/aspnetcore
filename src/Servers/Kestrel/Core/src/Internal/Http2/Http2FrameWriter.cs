@@ -74,6 +74,14 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
             _hpackEncoder = new Http2HPackEncoder();
         }
 
+        public void UpdateMaxHeaderTableSize(uint maxHeaderTableSize)
+        {
+            lock (_writeLock)
+            {
+                _hpackEncoder.UpdateMaxHeaderTableSize(maxHeaderTableSize);
+            }
+        }
+
         public void UpdateMaxFrameSize(uint maxFrameSize)
         {
             lock (_writeLock)
