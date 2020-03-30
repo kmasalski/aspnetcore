@@ -79,6 +79,50 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
         }
 
         [Fact]
+        public async Task StopAsyncCanBeCalledFromOnHandler()
+        {
+            var connection = new TestConnection();
+            var hubConnection = CreateHubConnection(connection, loggerFactory: LoggerFactory);
+
+            var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            hubConnection.On("method", async () =>
+            {
+                await hubConnection.StopAsync().OrTimeout();
+                tcs.SetResult(null);
+            });
+
+            await hubConnection.StartAsync().OrTimeout();
+
+            await connection.ReceiveJsonMessage(new { type = HubProtocolConstants.InvocationMessageType, target= "method", arguments = new object[] { } }).OrTimeout();
+
+            Assert.Null(await tcs.Task.OrTimeout());
+        }
+
+        [Fact]
+        public async Task StopAsyncDoesNotWaitForOnHandlers()
+        {
+            var connection = new TestConnection();
+            var hubConnection = CreateHubConnection(connection, loggerFactory: LoggerFactory);
+
+            var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var methodCalledTcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            hubConnection.On("method", async () =>
+            {
+                methodCalledTcs.SetResult(null);
+                await tcs.Task;
+            });
+
+            await hubConnection.StartAsync().OrTimeout();
+
+            await connection.ReceiveJsonMessage(new { type = HubProtocolConstants.InvocationMessageType, target = "method", arguments = new object[] { } }).OrTimeout();
+
+            await methodCalledTcs.Task.OrTimeout();
+            await hubConnection.StopAsync().OrTimeout();
+
+            tcs.SetResult(null);
+        }
+
+        [Fact]
         public async Task PendingInvocationsAreCanceledWhenConnectionClosesCleanly()
         {
             using (StartVerifiableLog())
@@ -448,22 +492,15 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
                     return Task.CompletedTask;
                 };
 
-                await connection.ReceiveJsonMessage(new { type = HubProtocolConstants.InvocationMessageType, target = "Echo", arguments = new object[] { "42" } });
+                await connection.ReceiveJsonMessage(new { type = HubProtocolConstants.InvocationMessageType, target = "Echo", arguments = new object[] { "42" } }).OrTimeout();
 
                 // Read sent message first to make sure invoke has been processed and is waiting for a response
                 await connection.ReadSentJsonAsync().OrTimeout();
-                await connection.ReceiveJsonMessage(new { type = HubProtocolConstants.CloseMessageType });
+                await connection.ReceiveJsonMessage(new { type = HubProtocolConstants.CloseMessageType }).OrTimeout();
 
                 await closedTcs.Task.OrTimeout();
 
-                try
-                {
-                    await tcs.Task.OrTimeout();
-                    Assert.True(false);
-                }
-                catch (TaskCanceledException)
-                {
-                }
+                await Assert.ThrowsAsync<TaskCanceledException>(() => tcs.Task.OrTimeout());
             }
         }
 

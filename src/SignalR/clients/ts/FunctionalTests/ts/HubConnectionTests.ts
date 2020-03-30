@@ -79,8 +79,7 @@ describe("hubConnection", () => {
             });
 
             if (shouldRunHttpsTests) {
-                // xit will skip the test
-                xit("using https, can invoke server method and receive result", (done) => {
+                it("using https, can invoke server method and receive result", (done) => {
                     const message = "你好，世界！";
 
                     const hubConnection = getConnectionBuilder(transportType, TESTHUBENDPOINT_HTTPS_URL, { httpClient })
@@ -1116,6 +1115,34 @@ describe("hubConnection", () => {
                     expect(headerValue).toBeNull();
                 } else {
                     expect(headerValue).toEqual(value);
+                }
+
+                await hubConnection.stop();
+                done();
+            } catch (e) {
+                fail(e);
+            }
+        });
+
+        it("overwrites library headers with user headers", async (done) => {
+            const [name] = getUserAgentHeader();
+            const headers = { [name]: "Custom Agent", "X-HEADER": "VALUE" };
+            const hubConnection = getConnectionBuilder(t, TESTHUBENDPOINT_URL, { headers })
+                .withHubProtocol(new JsonHubProtocol())
+                .build();
+
+            try {
+                await hubConnection.start();
+
+                const customUserHeader = await hubConnection.invoke("GetHeader", "X-HEADER");
+                const headerValue = await hubConnection.invoke("GetHeader", name);
+
+                if ((t === HttpTransportType.ServerSentEvents || t === HttpTransportType.WebSockets) && !Platform.isNode) {
+                    expect(headerValue).toBeNull();
+                    expect(customUserHeader).toBeNull();
+                } else {
+                    expect(headerValue).toEqual("Custom Agent");
+                    expect(customUserHeader).toEqual("VALUE");
                 }
 
                 await hubConnection.stop();
